@@ -28,6 +28,7 @@ type DataTable struct {
 	headerCells []string
 	list        *widget.List
 	numCols     int
+	searchBar   fyne.CanvasObject
 
 	mu            sync.RWMutex
 	layout        columnsLayout
@@ -63,7 +64,45 @@ func makeWidget(headerCells []string) *DataTable {
 	w.ExtendBaseWidget(w)
 	w.list = w.makeList()
 	w.header = w.makeHeader()
+	w.searchBar = w.makeSearchBar()
 	return w
+}
+
+func (w *DataTable) makeSearchBar() fyne.CanvasObject {
+	e := widget.NewEntry()
+	e.ActionItem = widget.NewIcon(theme.SearchIcon())
+	e.OnChanged = func(s string) {
+		w.filterRows(s)
+		w.list.Refresh()
+	}
+	return e
+}
+
+func (w *DataTable) filterRows(s string) {
+	defer w.updateFooter()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if s == "" {
+		w.cellsFiltered = slices.Clone(w.cells)
+	}
+	var selection [][]string
+	w.cellsRef = make([]int, 0)
+	s2 := strings.ToLower(s)
+	for i, row := range w.cells {
+		match := false
+		for _, c := range row {
+			c2 := strings.ToLower(c)
+			if strings.Contains(c2, s2) {
+				match = true
+				break
+			}
+		}
+		if match {
+			selection = append(selection, row)
+			w.cellsRef = append(w.cellsRef, i)
+		}
+	}
+	w.cellsFiltered = selection
 }
 
 func (w *DataTable) makeList() *widget.List {
@@ -117,44 +156,11 @@ func (w *DataTable) makeList() *widget.List {
 func (w *DataTable) makeHeader() []fyne.CanvasObject {
 	objects := make([]fyne.CanvasObject, w.numCols)
 	for i, s := range w.headerCells {
-		o := widget.NewEntry()
-		o.PlaceHolder = s
-		o.OnChanged = func(s string) {
-			filter := make([]string, w.numCols)
-			for j, x := range objects {
-				y := x.(*widget.Entry)
-				filter[j] = y.Text
-			}
-			filter[i] = s
-			w.filterRows(filter)
-			w.list.Refresh()
-		}
-		objects[i] = o
+		l := widget.NewLabel(s)
+		l.TextStyle.Bold = true
+		objects[i] = l
 	}
 	return objects
-}
-
-func (w *DataTable) filterRows(filter []string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	var selection [][]string
-	w.cellsRef = make([]int, 0)
-	for i, row := range w.cells {
-		match := true
-		for i, c := range row {
-			c2 := strings.ToLower(c)
-			if filter[i] != "" && !strings.Contains(c2, strings.ToLower(filter[i])) {
-				match = false
-				break
-			}
-		}
-		if match {
-			selection = append(selection, row)
-			w.cellsRef = append(w.cellsRef, i)
-		}
-	}
-	w.cellsFiltered = selection
-	w.updateFooter()
 }
 
 // SetCells sets the content of all cells in the table.
@@ -207,7 +213,11 @@ func maxColWidths(cells [][]string) []float32 {
 func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	header := container.NewVBox(container.New(w.layout, w.header...), widget.NewSeparator())
+	header := container.NewVBox(
+		w.searchBar,
+		container.New(w.layout, w.header...),
+		widget.NewSeparator(),
+	)
 	var footer fyne.CanvasObject
 	if !w.FooterDisabled {
 		footer = container.NewVBox(widget.NewSeparator(), w.bottomLabel)
