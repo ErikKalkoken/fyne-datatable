@@ -1,6 +1,7 @@
 package datatable
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -16,6 +17,14 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+type sortDir uint
+
+const (
+	sortOff sortDir = iota
+	sortAsc
+	sortDesc
+)
+
 // DataTable is a Fyne widget representing a table for showing data.
 type DataTable struct {
 	// Whether the footer is shown
@@ -29,7 +38,8 @@ type DataTable struct {
 	headerCells []string
 	list        *widget.List
 	numCols     int
-	searchBar   fyne.CanvasObject
+	searchBar   *widget.Entry
+	sortCols    []sortDir
 
 	mu            sync.RWMutex
 	layout        columnsLayout
@@ -61,33 +71,33 @@ func makeWidget(headerCells []string) *DataTable {
 		bottomLabel: widget.NewLabel(""),
 		headerCells: headerCells,
 		numCols:     len(headerCells),
+		sortCols:    make([]sortDir, len(headerCells)),
 	}
 	w.ExtendBaseWidget(w)
 	w.list = w.makeList()
 	w.header = w.makeHeader()
 	w.searchBar = w.makeSearchBar()
+	w.sortCols[0] = sortAsc
 	return w
 }
 
-func (w *DataTable) makeSearchBar() fyne.CanvasObject {
+func (w *DataTable) makeSearchBar() *widget.Entry {
 	e := widget.NewEntry()
 	e.ActionItem = widget.NewIcon(theme.SearchIcon())
 	e.OnChanged = func(s string) {
-		w.filterRows(s)
+		w.filterAndSortRows(s)
 		w.list.Refresh()
 	}
 	return e
 }
 
-func (w *DataTable) filterRows(s string) {
+func (w *DataTable) filterAndSortRows(s string) {
 	defer w.updateFooter()
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if s == "" {
-		w.cellsFiltered = slices.Clone(w.cells)
-	}
+	w.applySort()
 	var selection [][]string
-	w.cellsRef = make([]int, 0)
+	cellsRef := make([]int, 0)
 	s2 := strings.ToLower(s)
 	for i, row := range w.cells {
 		match := false
@@ -103,13 +113,59 @@ func (w *DataTable) filterRows(s string) {
 			w.cellsRef = append(w.cellsRef, i)
 		}
 	}
+	w.cellsRef = cellsRef
 	w.cellsFiltered = selection
+}
+
+func (w *DataTable) applySort() {
+	for i, x := range w.header {
+		t := w.headerCells[i]
+		var t2 string
+		switch w.sortCols[i] {
+		case sortOff:
+			t2 = t
+		case sortAsc:
+			t2 = t + "↑"
+		case sortDesc:
+			t2 = t + "↓"
+		}
+		l := x.(*TappableLabel)
+		l.SetText(t2)
+	}
+	for i, c := range w.sortCols {
+		switch c {
+		case sortAsc:
+			slices.SortFunc(w.cells, func(a, b []string) int {
+				return cmp.Compare(a[i], b[i])
+			})
+		case sortDesc:
+			slices.SortFunc(w.cells, func(a, b []string) int {
+				return cmp.Compare(b[i], a[i])
+			})
+		}
+	}
 }
 
 func (w *DataTable) makeHeader() []fyne.CanvasObject {
 	objects := make([]fyne.CanvasObject, w.numCols)
 	for i, s := range w.headerCells {
-		objects[i] = widget.NewLabel(s)
+		o := NewTappableLabel(s, nil)
+		o.OnTapped = func() {
+			for j := range w.numCols {
+				if j == i {
+					if w.sortCols[i] == sortDesc {
+						w.sortCols[i] = sortAsc
+					} else {
+						w.sortCols[i]++
+					}
+				} else {
+					w.sortCols[j] = sortOff
+				}
+			}
+			w.filterAndSortRows(w.searchBar.Text)
+			w.list.Refresh()
+		}
+		objects[i] = o
 	}
 	return objects
 }
@@ -179,6 +235,7 @@ func (w *DataTable) SetCells(cells [][]string) error {
 	if len(w.widths) == 0 {
 		w.layout = columnsLayout(maxColWidths(slices.Concat([][]string{w.headerCells}, w.cells)))
 	}
+	w.applySort()
 	w.updateFooter()
 	return nil
 }
