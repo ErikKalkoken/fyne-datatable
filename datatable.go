@@ -29,8 +29,12 @@ const (
 type DataTable struct {
 	// Whether the footer is shown
 	FooterDisabled bool
+	// Whether the header is shown
+	HeaderDisabled bool
 	// Callback runs whenever an entry is selected
 	OnSelected func(id int)
+	// Whether the search bar is shown
+	SearchBarDisabled bool
 
 	widget.BaseWidget
 	bottomLabel *widget.Label
@@ -85,36 +89,38 @@ func (w *DataTable) makeSearchBar() *widget.Entry {
 	e := widget.NewEntry()
 	e.ActionItem = widget.NewIcon(theme.SearchIcon())
 	e.OnChanged = func(s string) {
-		w.filterAndSortRows(s)
-		w.list.Refresh()
+		w.applyFilterAndSort(s)
 	}
 	return e
 }
 
-func (w *DataTable) filterAndSortRows(s string) {
-	defer w.updateFooter()
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.applySort()
-	var selection [][]string
-	cellsRef := make([]int, 0)
-	s2 := strings.ToLower(s)
-	for i, row := range w.cells {
-		match := false
-		for _, c := range row {
-			c2 := strings.ToLower(c)
-			if strings.Contains(c2, s2) {
-				match = true
-				break
+func (w *DataTable) applyFilterAndSort(search string) {
+	func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		w.applySort()
+		var selection [][]string
+		cellsRef := make([]int, 0)
+		s2 := strings.ToLower(search)
+		for i, row := range w.cells {
+			match := false
+			for _, c := range row {
+				c2 := strings.ToLower(c)
+				if strings.Contains(c2, s2) {
+					match = true
+					break
+				}
+			}
+			if match {
+				selection = append(selection, row)
+				w.cellsRef = append(w.cellsRef, i)
 			}
 		}
-		if match {
-			selection = append(selection, row)
-			w.cellsRef = append(w.cellsRef, i)
-		}
-	}
-	w.cellsRef = cellsRef
-	w.cellsFiltered = selection
+		w.cellsRef = cellsRef
+		w.cellsFiltered = selection
+	}()
+	w.updateFooter()
+	w.list.Refresh()
 }
 
 func (w *DataTable) applySort() {
@@ -150,6 +156,7 @@ func (w *DataTable) makeHeader() []fyne.CanvasObject {
 	objects := make([]fyne.CanvasObject, w.numCols)
 	for i, s := range w.headerCells {
 		o := NewTappableLabel(s, nil)
+		o.TextStyle.Bold = true
 		o.OnTapped = func() {
 			for j := range w.numCols {
 				if j == i {
@@ -162,8 +169,7 @@ func (w *DataTable) makeHeader() []fyne.CanvasObject {
 					w.sortCols[j] = sortOff
 				}
 			}
-			w.filterAndSortRows(w.searchBar.Text)
-			w.list.Refresh()
+			w.applyFilterAndSort(w.searchBar.Text)
 		}
 		objects[i] = o
 	}
@@ -269,16 +275,22 @@ func maxColWidths(cells [][]string) []float32 {
 func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	header := container.NewVBox(
-		w.searchBar,
-		container.NewStack(canvas.NewRectangle(theme.Color(theme.ColorNameHeaderBackground)), container.New(w.layout, w.header...)),
-		widget.NewSeparator(),
+	var headerFrame, footerFrame fyne.CanvasObject
+	header := container.NewStack(
+		canvas.NewRectangle(theme.Color(theme.ColorNameHeaderBackground)),
+		container.New(w.layout, w.header...),
 	)
-	var footer fyne.CanvasObject
-	if !w.FooterDisabled {
-		footer = container.NewVBox(widget.NewSeparator(), w.bottomLabel)
+	if !w.SearchBarDisabled && !w.HeaderDisabled {
+		headerFrame = container.NewVBox(w.searchBar, header, widget.NewSeparator())
+	} else if w.HeaderDisabled {
+		headerFrame = container.NewVBox(w.searchBar, widget.NewSeparator())
+	} else if w.SearchBarDisabled {
+		headerFrame = container.NewVBox(header, widget.NewSeparator())
 	}
-	c := container.NewBorder(header, footer, nil, nil, w.list)
+	if !w.FooterDisabled {
+		footerFrame = container.NewVBox(widget.NewSeparator(), w.bottomLabel)
+	}
+	c := container.NewBorder(headerFrame, footerFrame, nil, nil, w.list)
 	return widget.NewSimpleRenderer(c)
 }
 
