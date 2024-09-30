@@ -1,6 +1,7 @@
 package datatable
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -33,9 +34,27 @@ type DataTable struct {
 	cells         [][]string
 	cellsFiltered [][]string
 	cellsRef      []int
+	widths        []float32
 }
 
-func NewDataTable(headerCells []string) *DataTable {
+// NewDataTable returns a new DataTable with automatic width detection.
+func NewDataTable(headers []string) *DataTable {
+	w := makeWidget(headers)
+	return w
+}
+
+// NewDataTable returns a new DataTable with fixed columns widths.
+func NewDataTableWithFixedColumns(headers []string, widths []float32) (*DataTable, error) {
+	w := makeWidget(headers)
+	if len(widths) != len(headers) {
+		return nil, fmt.Errorf("need to provide widths for exactly %d columns", w.numCols)
+	}
+	w.widths = widths
+	w.layout = columnsLayout(w.widths)
+	return w, nil
+}
+
+func makeWidget(headerCells []string) *DataTable {
 	w := &DataTable{
 		bottomLabel: widget.NewLabel(""),
 		headerCells: headerCells,
@@ -138,15 +157,25 @@ func (w *DataTable) filterRows(filter []string) {
 	w.updateFooter()
 }
 
-func (w *DataTable) SetCells(cells [][]string) {
+// SetCells sets the content of all cells in the table.
+// Returns an error if not all rows have the same number of columns as the header.
+func (w *DataTable) SetCells(cells [][]string) error {
 	defer w.list.Refresh()
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	for _, r := range cells {
+		if len(r) != w.numCols {
+			return fmt.Errorf("some rows do not have %d columns", w.numCols)
+		}
+	}
 	w.cells = slices.Clone(cells)
 	w.cellsFiltered = slices.Clone(cells)
 	w.cellsRef = make([]int, 0)
-	w.layout = columnsLayout(maxColWidths(slices.Concat([][]string{w.headerCells}, cells)))
+	if len(w.widths) == 0 {
+		w.layout = columnsLayout(maxColWidths(slices.Concat([][]string{w.headerCells}, w.cells)))
+	}
 	w.updateFooter()
+	return nil
 }
 
 func (w *DataTable) updateFooter() {
@@ -214,7 +243,7 @@ func (d columnsLayout) Layout(objects []fyne.CanvasObject, containerSize fyne.Si
 		if i < len(objects)-1 || containerSize.Width < 0 {
 			w = d[i]
 		} else {
-			w = containerSize.Width - pos.X - padding
+			w = max(containerSize.Width-pos.X-padding, d[i])
 		}
 		o.Resize(fyne.Size{Width: w, Height: size.Height})
 		o.Move(pos)
