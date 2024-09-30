@@ -14,9 +14,12 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+// DataTable is a Fyne widget representing a table for showing data.
 type DataTable struct {
 	// Whether the footer is shown
-	FooterEnabled bool
+	FooterDisabled bool
+	// Callback runs whenever an entry is selected
+	OnSelected func(id int)
 
 	widget.BaseWidget
 	bottomLabel *widget.Label
@@ -29,6 +32,7 @@ type DataTable struct {
 	layout        columnsLayout
 	cells         [][]string
 	cellsFiltered [][]string
+	cellsRef      []int
 }
 
 func NewDataTable(headerCells []string) *DataTable {
@@ -73,6 +77,21 @@ func (w *DataTable) makeList() *widget.List {
 			}
 		},
 	)
+	list.OnSelected = func(id widget.ListItemID) {
+		if w.OnSelected == nil {
+			list.UnselectAll()
+			return
+		}
+		w.mu.RLock()
+		defer w.mu.RUnlock()
+		if id >= len(w.cellsFiltered) {
+			return // safeguard
+		}
+		if len(w.cellsRef) > 0 {
+			id = w.cellsRef[id]
+		}
+		w.OnSelected(id)
+	}
 	return list
 }
 
@@ -100,7 +119,8 @@ func (w *DataTable) filterRows(filter []string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	var selection [][]string
-	for _, row := range w.cells {
+	w.cellsRef = make([]int, 0)
+	for i, row := range w.cells {
 		match := true
 		for i, c := range row {
 			c2 := strings.ToLower(c)
@@ -111,6 +131,7 @@ func (w *DataTable) filterRows(filter []string) {
 		}
 		if match {
 			selection = append(selection, row)
+			w.cellsRef = append(w.cellsRef, i)
 		}
 	}
 	w.cellsFiltered = selection
@@ -123,6 +144,7 @@ func (w *DataTable) SetCells(cells [][]string) {
 	defer w.mu.Unlock()
 	w.cells = slices.Clone(cells)
 	w.cellsFiltered = slices.Clone(cells)
+	w.cellsRef = make([]int, 0)
 	w.layout = columnsLayout(maxColWidths(slices.Concat([][]string{w.headerCells}, cells)))
 	w.updateFooter()
 }
@@ -158,7 +180,7 @@ func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
 	defer w.mu.RUnlock()
 	header := container.NewVBox(container.New(w.layout, w.header...), widget.NewSeparator())
 	var footer fyne.CanvasObject
-	if w.FooterEnabled {
+	if !w.FooterDisabled {
 		footer = container.NewVBox(widget.NewSeparator(), w.bottomLabel)
 	}
 	c := container.NewBorder(header, footer, nil, nil, w.list)
