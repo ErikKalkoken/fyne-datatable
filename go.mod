@@ -1,4 +1,4 @@
-module example/fyne-datatable
+module github.com/ErikKalkoken/fyne-datatable
 
 go 1.23.1
 
