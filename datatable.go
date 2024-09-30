@@ -10,6 +10,7 @@ import (
 	"golang.org/x/text/message"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -105,6 +106,14 @@ func (w *DataTable) filterRows(s string) {
 	w.cellsFiltered = selection
 }
 
+func (w *DataTable) makeHeader() []fyne.CanvasObject {
+	objects := make([]fyne.CanvasObject, w.numCols)
+	for i, s := range w.headerCells {
+		objects[i] = widget.NewLabel(s)
+	}
+	return objects
+}
+
 func (w *DataTable) makeList() *widget.List {
 	list := widget.NewList(
 		func() int {
@@ -151,16 +160,6 @@ func (w *DataTable) makeList() *widget.List {
 		w.OnSelected(id)
 	}
 	return list
-}
-
-func (w *DataTable) makeHeader() []fyne.CanvasObject {
-	objects := make([]fyne.CanvasObject, w.numCols)
-	for i, s := range w.headerCells {
-		l := widget.NewLabel(s)
-		l.TextStyle.Bold = true
-		objects[i] = l
-	}
-	return objects
 }
 
 // SetCells sets the content of all cells in the table.
@@ -215,7 +214,7 @@ func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
 	defer w.mu.RUnlock()
 	header := container.NewVBox(
 		w.searchBar,
-		container.New(w.layout, w.header...),
+		container.NewStack(canvas.NewRectangle(theme.Color(theme.ColorNameHeaderBackground)), container.New(w.layout, w.header...)),
 		widget.NewSeparator(),
 	)
 	var footer fyne.CanvasObject
