@@ -1,10 +1,12 @@
 package datatable
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
+
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -13,6 +15,9 @@ import (
 )
 
 type DataTable struct {
+	// Whether the footer is shown
+	FooterEnabled bool
+
 	widget.BaseWidget
 	bottomLabel *widget.Label
 	header      []fyne.CanvasObject
@@ -109,6 +114,7 @@ func (w *DataTable) filterRows(filter []string) {
 		}
 	}
 	w.cellsFiltered = selection
+	w.updateFooter()
 }
 
 func (w *DataTable) SetCells(cells [][]string) {
@@ -118,7 +124,18 @@ func (w *DataTable) SetCells(cells [][]string) {
 	w.cells = slices.Clone(cells)
 	w.cellsFiltered = slices.Clone(cells)
 	w.layout = columnsLayout(maxColWidths(slices.Concat([][]string{w.headerCells}, cells)))
-	w.bottomLabel.SetText(fmt.Sprintf("%d rows", len(w.cells)))
+	w.updateFooter()
+}
+
+func (w *DataTable) updateFooter() {
+	var s string
+	p := message.NewPrinter(language.English)
+	if len(w.cellsFiltered) < len(w.cells) {
+		s = p.Sprintf("%d of %d entries (filtered)", len(w.cellsFiltered), len(w.cells))
+	} else {
+		s = p.Sprintf("%d entries", len(w.cells))
+	}
+	w.bottomLabel.SetText(s)
 }
 
 func maxColWidths(cells [][]string) []float32 {
@@ -140,7 +157,10 @@ func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	header := container.NewVBox(container.New(w.layout, w.header...), widget.NewSeparator())
-	footer := container.NewVBox(widget.NewSeparator(), w.bottomLabel)
+	var footer fyne.CanvasObject
+	if w.FooterEnabled {
+		footer = container.NewVBox(widget.NewSeparator(), w.bottomLabel)
+	}
 	c := container.NewBorder(header, footer, nil, nil, w.list)
 	return widget.NewSimpleRenderer(c)
 }
