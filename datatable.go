@@ -25,31 +25,37 @@ const (
 	sortDesc
 )
 
+// row represents a row in a DataTable
+type row struct {
+	idx     int // index of this row in the original data
+	columns []string
+}
+
 // DataTable is a Fyne widget representing a table for showing data.
 type DataTable struct {
 	// Whether the footer is shown
 	FooterDisabled bool
 	// Whether the header is shown
 	HeaderDisabled bool
-	// Callback runs whenever an entry is selected
-	OnSelected func(id int)
+	// Callback runs when an entry is selected.
+	// The index refers to the row in the original data.
+	OnSelected func(index int)
 	// Whether the search bar is shown
 	SearchBarDisabled bool
 
 	widget.BaseWidget
-	bottomLabel *widget.Label
+	body        *widget.List
+	footer      *widget.Label
 	header      []fyne.CanvasObject
 	headerCells []string
-	list        *widget.List
 	numCols     int
 	searchBar   *widget.Entry
 	sortCols    []sortDir
 
 	mu            sync.RWMutex
 	layout        columnsLayout
-	cells         [][]string
-	cellsFiltered [][]string
-	cellsRef      []int
+	cells         []row
+	cellsFiltered []row
 	widths        []float32
 }
 
@@ -72,13 +78,13 @@ func NewDataTableWithFixedColumns(headers []string, widths []float32) (*DataTabl
 
 func makeWidget(headerCells []string) *DataTable {
 	w := &DataTable{
-		bottomLabel: widget.NewLabel(""),
+		footer:      widget.NewLabel(""),
 		headerCells: headerCells,
 		numCols:     len(headerCells),
 		sortCols:    make([]sortDir, len(headerCells)),
 	}
 	w.ExtendBaseWidget(w)
-	w.list = w.makeList()
+	w.body = w.makeBody()
 	w.header = w.makeHeader()
 	w.searchBar = w.makeSearchBar()
 	w.sortCols[0] = sortAsc
@@ -99,12 +105,11 @@ func (w *DataTable) applyFilterAndSort(search string) {
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		w.applySort()
-		var selection [][]string
-		cellsRef := make([]int, 0)
+		var selection []row
 		s2 := strings.ToLower(search)
-		for i, row := range w.cells {
+		for _, row := range w.cells {
 			match := false
-			for _, c := range row {
+			for _, c := range row.columns {
 				c2 := strings.ToLower(c)
 				if strings.Contains(c2, s2) {
 					match = true
@@ -113,14 +118,12 @@ func (w *DataTable) applyFilterAndSort(search string) {
 			}
 			if match {
 				selection = append(selection, row)
-				w.cellsRef = append(w.cellsRef, i)
 			}
 		}
-		w.cellsRef = cellsRef
 		w.cellsFiltered = selection
 	}()
 	w.updateFooter()
-	w.list.Refresh()
+	w.body.Refresh()
 }
 
 func (w *DataTable) applySort() {
@@ -141,12 +144,12 @@ func (w *DataTable) applySort() {
 	for i, c := range w.sortCols {
 		switch c {
 		case sortAsc:
-			slices.SortFunc(w.cells, func(a, b []string) int {
-				return cmp.Compare(a[i], b[i])
+			slices.SortFunc(w.cells, func(a, b row) int {
+				return cmp.Compare(a.columns[i], b.columns[i])
 			})
 		case sortDesc:
-			slices.SortFunc(w.cells, func(a, b []string) int {
-				return cmp.Compare(b[i], a[i])
+			slices.SortFunc(w.cells, func(a, b row) int {
+				return cmp.Compare(b.columns[i], a.columns[i])
 			})
 		}
 	}
@@ -176,7 +179,7 @@ func (w *DataTable) makeHeader() []fyne.CanvasObject {
 	return objects
 }
 
-func (w *DataTable) makeList() *widget.List {
+func (w *DataTable) makeBody() *widget.List {
 	list := widget.NewList(
 		func() int {
 			w.mu.RLock()
@@ -202,7 +205,7 @@ func (w *DataTable) makeList() *widget.List {
 			c := co.(*fyne.Container)
 			for i := range w.numCols {
 				o := c.Objects[i].(*widget.Label)
-				o.SetText(r[i])
+				o.SetText(r.columns[i])
 			}
 		},
 	)
@@ -216,10 +219,7 @@ func (w *DataTable) makeList() *widget.List {
 		if id >= len(w.cellsFiltered) {
 			return // safeguard
 		}
-		if len(w.cellsRef) > 0 {
-			id = w.cellsRef[id]
-		}
-		w.OnSelected(id)
+		w.OnSelected(w.cellsFiltered[id].idx)
 	}
 	return list
 }
@@ -227,7 +227,7 @@ func (w *DataTable) makeList() *widget.List {
 // SetCells sets the content of all cells in the table.
 // Returns an error if not all rows have the same number of columns as the header.
 func (w *DataTable) SetCells(cells [][]string) error {
-	defer w.list.Refresh()
+	defer w.body.Refresh()
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for _, r := range cells {
@@ -235,11 +235,13 @@ func (w *DataTable) SetCells(cells [][]string) error {
 			return fmt.Errorf("some rows do not have %d columns", w.numCols)
 		}
 	}
-	w.cells = slices.Clone(cells)
-	w.cellsFiltered = slices.Clone(cells)
-	w.cellsRef = make([]int, 0)
+	w.cells = make([]row, len(cells))
+	for i, r := range cells {
+		w.cells[i] = row{idx: i, columns: r}
+	}
+	w.cellsFiltered = slices.Clone(w.cells)
 	if len(w.widths) == 0 {
-		w.layout = columnsLayout(maxColWidths(slices.Concat([][]string{w.headerCells}, w.cells)))
+		w.layout = columnsLayout(maxColWidths(slices.Concat([][]string{w.headerCells}, cells)))
 	}
 	w.applySort()
 	w.updateFooter()
@@ -254,7 +256,7 @@ func (w *DataTable) updateFooter() {
 	} else {
 		s = p.Sprintf("%d entries", len(w.cells))
 	}
-	w.bottomLabel.SetText(s)
+	w.footer.SetText(s)
 }
 
 func maxColWidths(cells [][]string) []float32 {
@@ -288,9 +290,9 @@ func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
 		headerFrame = container.NewVBox(header, widget.NewSeparator())
 	}
 	if !w.FooterDisabled {
-		footerFrame = container.NewVBox(widget.NewSeparator(), w.bottomLabel)
+		footerFrame = container.NewVBox(widget.NewSeparator(), w.footer)
 	}
-	c := container.NewBorder(headerFrame, footerFrame, nil, nil, w.list)
+	c := container.NewBorder(headerFrame, footerFrame, nil, nil, w.body)
 	return widget.NewSimpleRenderer(c)
 }
 
