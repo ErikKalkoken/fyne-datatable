@@ -10,46 +10,56 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-func MakeTable() fyne.CanvasObject {
-	var cells [][]string
-	header := []string{"First", "Second", "Third"}
-	cellsMaster := [][]string{
-		{"Joker", "Peter Parker", "Superman"},
-		{"Bruce Wayne", "Penguin", "Dr. Doom"},
-		{"alpha", "bravo", "charlie"},
-		{"Joker", "Peter Parker", "Superman"},
-		{"Bruce Wayne", "Penguin", "Dr. Doom"},
-		{"alpha", "bravo", "charlie"},
-	}
-	cells = slices.Clone(cellsMaster)
-	colLayout := columnsLayout(maxColWidths(cells))
+type DataTable struct {
+	widget.BaseWidget
+	cells         [][]string
+	cellsFiltered [][]string
+	header        []string
+	headerRow     []fyne.CanvasObject
+	layout        columnsLayout
+	list          *widget.List
+}
+
+func NewDataTable(header []string) *DataTable {
+	w := &DataTable{header: header}
+	w.ExtendBaseWidget(w)
+	w.list = w.makeList()
+	w.headerRow = w.makeHeaderRow()
+	return w
+}
+
+func (w *DataTable) makeList() *widget.List {
 	list := widget.NewList(
 		func() int {
-			return len(cells)
+			return len(w.cellsFiltered)
 		},
 		func() fyne.CanvasObject {
-			c := len(header)
+			c := len(w.header)
 			objects := make([]fyne.CanvasObject, c)
 			for i := range c {
 				objects[i] = widget.NewLabel("")
 			}
-			return container.New(colLayout, objects...)
+			return container.New(w.layout, objects...)
 		},
 		func(id widget.ListItemID, co fyne.CanvasObject) {
-			if id >= len(cells) {
-				return
+			if id >= len(w.cellsFiltered) {
+				return // safeguard
 			}
-			r := cells[id]
+			r := w.cellsFiltered[id]
 			c := co.(*fyne.Container)
-			for i := range len(header) {
+			for i := range len(w.header) {
 				o := c.Objects[i].(*widget.Label)
 				o.SetText(r[i])
 			}
 		},
 	)
+	return list
+}
+
+func (w *DataTable) makeHeaderRow() []fyne.CanvasObject {
 	filterRows := func(filter []string) {
 		var selection [][]string
-		for _, row := range cellsMaster {
+		for _, row := range w.cells {
 			match := true
 			for i, c := range row {
 				c2 := strings.ToLower(c)
@@ -62,15 +72,15 @@ func MakeTable() fyne.CanvasObject {
 				selection = append(selection, row)
 			}
 		}
-		cells = selection
-		list.Refresh()
+		w.cellsFiltered = selection
+		w.list.Refresh()
 	}
-	objects := make([]fyne.CanvasObject, len(header))
-	for i, s := range header {
+	objects := make([]fyne.CanvasObject, len(w.header))
+	for i, s := range w.header {
 		o := widget.NewEntry()
 		o.PlaceHolder = s
 		o.OnChanged = func(s string) {
-			filter := make([]string, len(header))
+			filter := make([]string, len(w.header))
 			for j, x := range objects {
 				y := x.(*widget.Entry)
 				filter[j] = y.Text
@@ -80,8 +90,19 @@ func MakeTable() fyne.CanvasObject {
 		}
 		objects[i] = o
 	}
-	head := container.NewVBox(container.New(colLayout, objects...), widget.NewSeparator())
-	return container.NewBorder(head, nil, nil, nil, list)
+	return objects
+}
+
+func (w *DataTable) SetCells(cells [][]string) {
+	w.cells = cells
+	w.cellsFiltered = slices.Clone(cells)
+	w.layout = columnsLayout(maxColWidths(cells))
+}
+
+func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
+	head := container.NewVBox(container.New(w.layout, w.headerRow...), widget.NewSeparator())
+	c := container.NewBorder(head, nil, nil, nil, w.list)
+	return widget.NewSimpleRenderer(c)
 }
 
 func maxColWidths(cells [][]string) []float32 {
