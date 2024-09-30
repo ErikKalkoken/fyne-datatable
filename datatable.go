@@ -19,10 +19,17 @@ import (
 
 type sortDir uint
 
+// sort directions for columns
 const (
 	sortOff sortDir = iota
 	sortAsc
 	sortDesc
+)
+
+// characters for showing sort direction
+const (
+	characterSortAsc  = "↑"
+	characterSortDesc = "↓"
 )
 
 // row represents a row in a DataTable
@@ -60,18 +67,23 @@ type DataTable struct {
 }
 
 // NewDataTable returns a new DataTable with automatic width detection.
-func NewDataTable(headers []string) *DataTable {
-	w := makeWidget(headers)
+func NewDataTable(header []string) *DataTable {
+	w := makeWidget(header)
 	return w
 }
 
 // NewDataTable returns a new DataTable with fixed columns widths.
-func NewDataTableWithFixedColumns(headers []string, widths []float32) (*DataTable, error) {
-	w := makeWidget(headers)
-	if len(widths) != len(headers) {
+func NewDataTableWithFixedColumns(header []string, widths []float32) (*DataTable, error) {
+	w := makeWidget(header)
+	if len(widths) != len(header) {
 		return nil, fmt.Errorf("need to provide widths for exactly %d columns", w.numCols)
 	}
-	w.widths = widths
+	// width of headers is minimum for each column
+	hw := maxColWidths([][]string{headersForWidthsCalc(header)})
+	w.widths = make([]float32, len(widths))
+	for i := range len(widths) {
+		w.widths[i] = max(widths[i], hw[i])
+	}
 	w.layout = columnsLayout(w.widths)
 	return w, nil
 }
@@ -134,9 +146,9 @@ func (w *DataTable) applySort() {
 		case sortOff:
 			t2 = t
 		case sortAsc:
-			t2 = t + "↑"
+			t2 = t + characterSortAsc
 		case sortDesc:
-			t2 = t + "↓"
+			t2 = t + characterSortDesc
 		}
 		l := x.(*TappableLabel)
 		l.SetText(t2)
@@ -191,7 +203,9 @@ func (w *DataTable) makeBody() *widget.List {
 			defer w.mu.RUnlock()
 			objects := make([]fyne.CanvasObject, w.numCols)
 			for i := range w.numCols {
-				objects[i] = widget.NewLabel("")
+				l := widget.NewLabel("")
+				l.Truncation = fyne.TextTruncateEllipsis
+				objects[i] = l
 			}
 			return container.New(w.layout, objects...)
 		},
@@ -241,11 +255,20 @@ func (w *DataTable) SetCells(cells [][]string) error {
 	}
 	w.cellsFiltered = slices.Clone(w.cells)
 	if len(w.widths) == 0 {
-		w.layout = columnsLayout(maxColWidths(slices.Concat([][]string{w.headerCells}, cells)))
+		allCells := slices.Concat([][]string{headersForWidthsCalc(w.headerCells)}, cells)
+		w.layout = columnsLayout(maxColWidths(allCells))
 	}
 	w.applySort()
 	w.updateFooter()
 	return nil
+}
+
+func headersForWidthsCalc(header []string) []string {
+	h2 := make([]string, len(header))
+	for i, v := range header {
+		h2[i] = v + characterSortAsc
+	}
+	return h2
 }
 
 func (w *DataTable) updateFooter() {
