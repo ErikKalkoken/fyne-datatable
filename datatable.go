@@ -42,24 +42,21 @@ type row struct {
 
 // DataTable is a Fyne widget representing a table for showing data.
 type DataTable struct {
-	// Whether the footer is shown
-	FooterDisabled bool
-	// Whether the header is shown
-	HeaderDisabled bool
 	// Callback runs when an entry is selected.
-	// The index refers to the row in the original data.
+	// index refers to the row in the original data.
 	OnSelected func(index int)
-	// Whether the search bar is shown
-	SearchBarDisabled bool
 
 	widget.BaseWidget
-	body        *widget.List
-	footer      *widget.Label
-	header      []fyne.CanvasObject
-	headerCells []string
-	numCols     int
-	searchBar   *widget.Entry
-	sortCols    []sortDir
+	body            *widget.List
+	footer          *widget.Label
+	footerHidden    bool
+	header          []fyne.CanvasObject
+	headerCells     []string
+	headerHidden    bool
+	numCols         int
+	searchBar       *widget.Entry
+	searchBarHidden bool
+	sortCols        []sortDir
 
 	mu            sync.RWMutex
 	layout        columnsLayout
@@ -68,42 +65,79 @@ type DataTable struct {
 	widths        []float32
 }
 
+func OptionHideSearchBar(dt *DataTable) error {
+	dt.searchBarHidden = true
+	return nil
+}
+
+func OptionHideHeader(dt *DataTable) error {
+	dt.headerHidden = true
+	return nil
+}
+
+func OptionHideFooter(dt *DataTable) error {
+	dt.footerHidden = true
+	return nil
+}
+
+func OptionSetColumnWidth(col int, width float32) func(*DataTable) error {
+	return func(dt *DataTable) error {
+		if col < 0 || col >= dt.numCols {
+			return fmt.Errorf("invalid column: %d", col)
+		}
+		dt.widths[col] = width
+		return nil
+	}
+}
+
+func OptionSetAllColumnWidths(widths []float32) func(*DataTable) error {
+	return func(dt *DataTable) error {
+		if len(widths) != dt.numCols {
+			return fmt.Errorf("need to provide widths for exactly %d columns", dt.numCols)
+		}
+		dt.widths = widths
+		return nil
+	}
+}
+
 // NewDataTable returns a new DataTable with automatic width detection.
-func NewDataTable(header []string) *DataTable {
-	w := makeWidget(header)
-	return w
-}
-
-// NewDataTable returns a new DataTable with fixed columns widths.
-func NewDataTableWithFixedColumns(header []string, widths []float32) (*DataTable, error) {
-	w := makeWidget(header)
-	if len(widths) != len(header) {
-		return nil, fmt.Errorf("need to provide widths for exactly %d columns", w.numCols)
-	}
-	// width of headers is minimum for each column
-	hw := maxColWidths([][]string{headersForWidthsCalc(header)})
-	w.widths = make([]float32, len(widths))
-	for i := range len(widths) {
-		w.widths[i] = max(widths[i], hw[i])
-	}
-	w.layout = columnsLayout(w.widths)
-	return w, nil
-}
-
-func makeWidget(headerCells []string) *DataTable {
-	w := &DataTable{
+// It can be configured through options.
+func NewDataTable(header []string, options ...func(*DataTable) error) (*DataTable, error) {
+	dt := &DataTable{
 		footer:      widget.NewLabel(""),
-		headerCells: headerCells,
-		numCols:     len(headerCells),
-		sortCols:    make([]sortDir, len(headerCells)),
+		headerCells: header,
+		numCols:     len(header),
+		sortCols:    make([]sortDir, len(header)),
+		widths:      make([]float32, len(header)),
 	}
-	w.ExtendBaseWidget(w)
-	w.body = w.makeBody()
-	w.header = w.makeHeader()
-	w.searchBar = w.makeSearchBar()
-	w.sortCols[0] = sortAsc
-	return w
+	for _, op := range options {
+		if err := op(dt); err != nil {
+			return nil, err
+		}
+	}
+	dt.ExtendBaseWidget(dt)
+	dt.body = dt.makeBody()
+	dt.header = dt.makeHeader()
+	dt.searchBar = dt.makeSearchBar()
+	dt.sortCols[0] = sortAsc
+	return dt, nil
 }
+
+// // NewDataTable returns a new DataTable with fixed columns widths.
+// func NewDataTableWithFixedColumns(header []string, widths []float32) (*DataTable, error) {
+// 	w := makeWidget(header)
+// 	if len(widths) != len(header) {
+// 		return nil, fmt.Errorf("need to provide widths for exactly %d columns", w.numCols)
+// 	}
+// 	// width of headers is minimum for each column
+// 	hw := maxColWidths([][]string{headersForWidthsCalc(header)})
+// 	w.widths = make([]float32, len(widths))
+// 	for i := range len(widths) {
+// 		w.widths[i] = max(widths[i], hw[i])
+// 	}
+// 	w.layout = columnsLayout(w.widths)
+// 	return w, nil
+// }
 
 func (w *DataTable) makeSearchBar() *widget.Entry {
 	e := widget.NewEntry()
@@ -256,10 +290,8 @@ func (w *DataTable) SetCells(cells [][]string) error {
 		w.cells[i] = row{idx: i, columns: r}
 	}
 	w.cellsFiltered = slices.Clone(w.cells)
-	if len(w.widths) == 0 {
-		allCells := slices.Concat([][]string{headersForWidthsCalc(w.headerCells)}, cells)
-		w.layout = columnsLayout(maxColWidths(allCells))
-	}
+	allCells := slices.Concat([][]string{headersForWidthsCalc(w.headerCells)}, cells)
+	w.layout = columnsLayout(maxColWidths(allCells, w.widths))
 	w.applySort()
 	w.updateFooter()
 	return nil
@@ -284,11 +316,14 @@ func (w *DataTable) updateFooter() {
 	w.footer.SetText(s)
 }
 
-func maxColWidths(cells [][]string) []float32 {
+func maxColWidths(cells [][]string, widths []float32) []float32 {
 	numRows := len(cells)
 	numCols := len(cells[0])
-	colWidths := make([]float32, numCols)
+	colWidths := slices.Clone(widths)
 	for c := range numCols {
+		if colWidths[c] != 0 {
+			continue // only calculate if width is not set
+		}
 		for r := range numRows {
 			s := cells[r][c]
 			l := widget.NewLabel(s)
@@ -303,19 +338,21 @@ func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	var headerFrame, footerFrame fyne.CanvasObject
-	header := container.NewStack(
-		canvas.NewRectangle(theme.Color(theme.ColorNameHeaderBackground)),
-		container.New(w.layout, w.header...),
-	)
-	search := container.NewGridWithColumns(3, layout.NewSpacer(), w.searchBar, layout.NewSpacer())
-	if !w.SearchBarDisabled && !w.HeaderDisabled {
-		headerFrame = container.NewVBox(search, header, widget.NewSeparator())
-	} else if w.HeaderDisabled {
-		headerFrame = container.NewVBox(search, widget.NewSeparator())
-	} else if w.SearchBarDisabled {
-		headerFrame = container.NewVBox(header, widget.NewSeparator())
+	top := container.NewVBox()
+	if !w.searchBarHidden {
+		top.Add(container.NewGridWithColumns(3, layout.NewSpacer(), w.searchBar, layout.NewSpacer()))
 	}
-	if !w.FooterDisabled {
+	if !w.headerHidden {
+		top.Add(container.NewStack(
+			canvas.NewRectangle(theme.Color(theme.ColorNameHeaderBackground)),
+			container.New(w.layout, w.header...),
+		))
+	}
+	if len(top.Objects) > 0 {
+		top.Add(widget.NewSeparator())
+		headerFrame = top
+	}
+	if !w.footerHidden {
 		footerFrame = container.NewVBox(widget.NewSeparator(), w.footer)
 	}
 	c := container.NewBorder(headerFrame, footerFrame, nil, nil, w.body)
