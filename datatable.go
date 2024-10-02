@@ -3,6 +3,7 @@ package datatable
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
@@ -224,8 +226,8 @@ func (w *DataTable) makeBody() *widget.List {
 		},
 	)
 	list.OnSelected = func(id widget.ListItemID) {
+		defer list.UnselectAll()
 		if w.OnSelected == nil {
-			list.UnselectAll()
 			return
 		}
 		w.mu.RLock()
@@ -291,7 +293,7 @@ func maxColWidths(cells [][]string) []float32 {
 			s := cells[r][c]
 			l := widget.NewLabel(s)
 			w := l.MinSize().Width
-			colWidths[c] = max(w, colWidths[c])
+			colWidths[c] = float32(math.Ceil(float64(max(w, colWidths[c]))))
 		}
 	}
 	return colWidths
@@ -305,10 +307,11 @@ func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
 		canvas.NewRectangle(theme.Color(theme.ColorNameHeaderBackground)),
 		container.New(w.layout, w.header...),
 	)
+	search := container.NewGridWithColumns(3, layout.NewSpacer(), w.searchBar, layout.NewSpacer())
 	if !w.SearchBarDisabled && !w.HeaderDisabled {
-		headerFrame = container.NewVBox(w.searchBar, header, widget.NewSeparator())
+		headerFrame = container.NewVBox(search, header, widget.NewSeparator())
 	} else if w.HeaderDisabled {
-		headerFrame = container.NewVBox(w.searchBar, widget.NewSeparator())
+		headerFrame = container.NewVBox(search, widget.NewSeparator())
 	} else if w.SearchBarDisabled {
 		headerFrame = container.NewVBox(header, widget.NewSeparator())
 	}
