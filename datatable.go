@@ -42,70 +42,88 @@ type row struct {
 
 // DataTable is a Fyne widget representing a table for showing data.
 type DataTable struct {
-	FooterHidden    bool
-	HeaderHidden    bool
-	SearchBarHidden bool
 
 	// Callback runs when an entry is selected.
 	// index refers to the row in the original data.
 	OnSelected func(index int)
 
 	widget.BaseWidget
-	body        *widget.List
-	footer      *widget.Label
-	header      []fyne.CanvasObject
-	headerCells []string
-	numCols     int
-	searchBar   *widget.Entry
-	sortCols    []sortDir
+	body            *widget.List
+	footer          *widget.Label
+	footerHidden    bool
+	header          []fyne.CanvasObject
+	headerCells     []string
+	headerHidden    bool
+	numCols         int
+	searchBar       *widget.Entry
+	searchBarHidden bool
+	sortCols        []sortDir
+	widths          []float32
 
 	mu            sync.RWMutex
 	layout        columnsLayout
 	cells         []row
 	cellsFiltered []row
-	widths        []float32
+}
+
+// Config is a struct for configuring a DataTable widget.
+// The Header field is mandatory. All other fields are optional.
+type Config struct {
+	// ColumnWidths sets the width of each column.
+	// A column with width 0 will be auto-sized to fit the data in that column.
+	// The width will be adjusted to fit the column header.
+	ColumnWidths []float32
+
+	// Whether to hide the footer.
+	FooterHidden bool
+
+	// Header sets the content of the header columns MANDATORY.
+	Header []string
+
+	// Whether to hide the header.
+	HeaderHidden bool
+
+	// Whether to hide the search bar.
+	SearchBarHidden bool
 }
 
 // New returns a new DataTable widget.
-// By default all columns will be automatically sized to fit the data.
-func New(header []string) *DataTable {
-	dt := &DataTable{
-		footer:      widget.NewLabel(""),
-		headerCells: header,
-		numCols:     len(header),
-		sortCols:    make([]sortDir, len(header)),
-		widths:      make([]float32, len(header)),
+// The widgets is configured with a [Config] struct.
+func New(cfg Config) (*DataTable, error) {
+	if len(cfg.Header) == 0 {
+		return nil, fmt.Errorf("headers must be defined")
 	}
+	numCols := len(cfg.Header)
+	dt := &DataTable{
+		footer:          widget.NewLabel(""),
+		footerHidden:    cfg.FooterHidden,
+		headerCells:     cfg.Header,
+		headerHidden:    cfg.HeaderHidden,
+		numCols:         numCols,
+		searchBarHidden: cfg.SearchBarHidden,
+		sortCols:        make([]sortDir, numCols),
+	}
+	w, err := defineWidths(cfg.ColumnWidths, numCols)
+	if err != nil {
+		return nil, err
+	}
+	dt.widths = w
 	dt.ExtendBaseWidget(dt)
 	dt.body = dt.makeBody()
 	dt.header = dt.makeHeader()
 	dt.searchBar = dt.makeSearchBar()
 	dt.sortCols[0] = sortAsc
-	return dt
+	return dt, nil
 }
 
-// // NewDataTable returns a new DataTable with fixed columns widths.
-// func NewDataTableWithFixedColumns(header []string, widths []float32) (*DataTable, error) {
-// 	w := makeWidget(header)
-// 	if len(widths) != len(header) {
-// 		return nil, fmt.Errorf("need to provide widths for exactly %d columns", w.numCols)
-// 	}
-// 	// width of headers is minimum for each column
-// 	hw := maxColWidths([][]string{headersForWidthsCalc(header)})
-// 	w.widths = make([]float32, len(widths))
-// 	for i := range len(widths) {
-// 		w.widths[i] = max(widths[i], hw[i])
-// 	}
-// 	w.layout = columnsLayout(w.widths)
-// 	return w, nil
-// }
-
-func (dt *DataTable) SetColumnWidths(widths []float32) error {
-	if len(widths) != dt.numCols {
-		return fmt.Errorf("need to provide widths for exactly %d columns", dt.numCols)
+func defineWidths(w []float32, numCols int) ([]float32, error) {
+	if len(w) == 0 {
+		return make([]float32, numCols), nil
 	}
-	dt.widths = widths
-	return nil
+	if len(w) != numCols {
+		return nil, fmt.Errorf("need to provide widths for exactly %d columns", numCols)
+	}
+	return slices.Clone(w), nil
 }
 
 func (dt *DataTable) makeSearchBar() *widget.Entry {
@@ -243,9 +261,9 @@ func (dt *DataTable) makeBody() *widget.List {
 	return list
 }
 
-// SetCells sets the content of all cells in the table.
-// Returns an error if not all rows have the same number of columns as the header.
-func (dt *DataTable) SetCells(cells [][]string) error {
+// SetData sets the content of all cells in the table.
+// Returns an error if not all rows have the expected number of columns.
+func (dt *DataTable) SetData(cells [][]string) error {
 	defer dt.body.Refresh()
 	dt.mu.Lock()
 	defer dt.mu.Unlock()
@@ -260,7 +278,7 @@ func (dt *DataTable) SetCells(cells [][]string) error {
 	}
 	dt.cellsFiltered = slices.Clone(dt.cells)
 	allCells := slices.Concat([][]string{headersForWidthsCalc(dt.headerCells)}, cells)
-	dt.layout = columnsLayout(maxColWidths(allCells, dt.widths))
+	dt.layout = columnsLayout(minimalColumnWidths(allCells, dt.widths))
 	dt.applySort()
 	dt.updateFooter()
 	return nil
@@ -285,13 +303,17 @@ func (dt *DataTable) updateFooter() {
 	dt.footer.SetText(s)
 }
 
-func maxColWidths(cells [][]string, widths []float32) []float32 {
-	numRows := len(cells)
+// minimalColumnWidths returns the calculated widths for all columns.
+// It assumes the first row in cells contains the headers.
+func minimalColumnWidths(cells [][]string, widths []float32) []float32 {
 	numCols := len(cells[0])
 	colWidths := slices.Clone(widths)
 	for c := range numCols {
+		var numRows int
 		if colWidths[c] != 0 {
-			continue // only calculate if width is not set
+			numRows = 1 // only look at headers
+		} else {
+			numRows = len(cells)
 		}
 		for r := range numRows {
 			s := cells[r][c]
@@ -308,10 +330,10 @@ func (dt *DataTable) CreateRenderer() fyne.WidgetRenderer {
 	defer dt.mu.RUnlock()
 	var headerFrame, footerFrame fyne.CanvasObject
 	top := container.NewVBox()
-	if !dt.SearchBarHidden {
+	if !dt.searchBarHidden {
 		top.Add(container.NewGridWithColumns(3, layout.NewSpacer(), dt.searchBar, layout.NewSpacer()))
 	}
-	if !dt.HeaderHidden {
+	if !dt.headerHidden {
 		top.Add(container.NewStack(
 			canvas.NewRectangle(theme.Color(theme.ColorNameHeaderBackground)),
 			container.New(dt.layout, dt.header...),
@@ -321,7 +343,7 @@ func (dt *DataTable) CreateRenderer() fyne.WidgetRenderer {
 		top.Add(widget.NewSeparator())
 		headerFrame = top
 	}
-	if !dt.FooterHidden {
+	if !dt.footerHidden {
 		footerFrame = container.NewVBox(widget.NewSeparator(), dt.footer)
 	}
 	c := container.NewBorder(headerFrame, footerFrame, nil, nil, dt.body)
