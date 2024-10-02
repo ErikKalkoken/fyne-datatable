@@ -1,7 +1,9 @@
+// Package datatable provides the DataTable widget for the Fyne GUI toolkit.
 package datatable
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -19,13 +21,40 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+// Config is a struct for configuring a DataTable widget.
+// All fields except for Header are optional.
+type Config struct {
+	// Header sets the content of the header columns.
+	Header []string // MANDATORY
+
+	// ColumnWidths sets the width of each column.
+	// A column with width 0 will be auto-sized to fit the data in that column.
+	// The width will be adjusted to fit the column header.
+	ColumnWidths []float32
+
+	// Whether to hide the footer.
+	FooterHidden bool
+
+	// Whether to hide the header.
+	HeaderHidden bool
+
+	// Whether to hide the search bar.
+	SearchBarHidden bool
+
+	// Initially sorted column
+	SortedColumnIndex int
+
+	// Initial sort direction
+	SortedColumnDirection sortDir
+}
+
 type sortDir uint
 
 // sort directions for columns
 const (
 	sortOff sortDir = iota
-	sortAsc
-	sortDesc
+	SortAsc
+	SortDesc
 )
 
 // characters for showing sort direction
@@ -40,7 +69,8 @@ type row struct {
 	columns []string
 }
 
-// DataTable is a Fyne widget representing a table for showing data.
+// DataTable is a Fyne widget representing a data focused table.
+// It is safe for concurrent use by multiple goroutines.
 type DataTable struct {
 
 	// Callback runs when an entry is selected.
@@ -66,83 +96,74 @@ type DataTable struct {
 	cellsFiltered []row
 }
 
-// Config is a struct for configuring a DataTable widget.
-// The Header field is mandatory. All other fields are optional.
-type Config struct {
-	// ColumnWidths sets the width of each column.
-	// A column with width 0 will be auto-sized to fit the data in that column.
-	// The width will be adjusted to fit the column header.
-	ColumnWidths []float32
-
-	// Whether to hide the footer.
-	FooterHidden bool
-
-	// Header sets the content of the header columns MANDATORY.
-	Header []string
-
-	// Whether to hide the header.
-	HeaderHidden bool
-
-	// Whether to hide the search bar.
-	SearchBarHidden bool
-}
-
 // New returns a new DataTable widget.
 // The widgets is configured with a [Config] struct.
-func New(cfg Config) (*DataTable, error) {
-	if len(cfg.Header) == 0 {
+// Returns an error if the validation of the config value failed.
+func New(config Config) (*DataTable, error) {
+	if len(config.Header) == 0 {
 		return nil, fmt.Errorf("headers must be defined")
 	}
-	numCols := len(cfg.Header)
-	dt := &DataTable{
+	numCols := len(config.Header)
+	w := &DataTable{
 		footer:          widget.NewLabel(""),
-		footerHidden:    cfg.FooterHidden,
-		headerCells:     cfg.Header,
-		headerHidden:    cfg.HeaderHidden,
+		footerHidden:    config.FooterHidden,
+		headerCells:     config.Header,
+		headerHidden:    config.HeaderHidden,
 		numCols:         numCols,
-		searchBarHidden: cfg.SearchBarHidden,
+		searchBarHidden: config.SearchBarHidden,
 		sortCols:        make([]sortDir, numCols),
 	}
-	w, err := defineWidths(cfg.ColumnWidths, numCols)
+
+	// column widths
+	x, err := defineWidths(config.ColumnWidths, numCols)
 	if err != nil {
 		return nil, err
 	}
-	dt.widths = w
-	dt.ExtendBaseWidget(dt)
-	dt.body = dt.makeBody()
-	dt.header = dt.makeHeader()
-	dt.searchBar = dt.makeSearchBar()
-	dt.sortCols[0] = sortAsc
-	return dt, nil
+	w.widths = x
+
+	// sorting
+	if config.SortedColumnDirection == sortOff {
+		config.SortedColumnDirection = SortAsc
+	}
+	if config.SortedColumnIndex < 0 || config.SortedColumnIndex >= numCols {
+		return nil, errors.New("invalid index for initial sort column")
+	}
+	w.sortCols[config.SortedColumnIndex] = config.SortedColumnDirection
+
+	w.ExtendBaseWidget(w)
+	w.body = w.makeBody()
+	w.header = w.makeHeader()
+	w.searchBar = w.makeSearchBar()
+	return w, nil
 }
 
-func defineWidths(w []float32, numCols int) ([]float32, error) {
-	if len(w) == 0 {
+func defineWidths(widths []float32, numCols int) ([]float32, error) {
+	if len(widths) == 0 {
 		return make([]float32, numCols), nil
 	}
-	if len(w) != numCols {
+	if len(widths) != numCols {
 		return nil, fmt.Errorf("need to provide widths for exactly %d columns", numCols)
 	}
-	return slices.Clone(w), nil
+	return slices.Clone(widths), nil
 }
 
-func (dt *DataTable) makeSearchBar() *widget.Entry {
+func (w *DataTable) makeSearchBar() *widget.Entry {
 	e := widget.NewEntry()
 	e.ActionItem = widget.NewIcon(theme.SearchIcon())
 	e.OnChanged = func(s string) {
-		dt.applyFilterAndSort(s)
+		w.applyFilterAndSort(s)
 	}
 	return e
 }
 
-func (dt *DataTable) applyFilterAndSort(search string) {
+func (w *DataTable) applyFilterAndSort(search string) {
 	func() {
-		dt.mu.Lock()
-		defer dt.mu.Unlock()
-		dt.applySort()
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		w.applySort()
 		var selection []row
 		s2 := strings.ToLower(search)
-		for _, row := range dt.cells {
+		for _, row := range w.cells {
 			match := false
 			for _, c := range row.columns {
 				c2 := strings.ToLower(c)
@@ -155,92 +176,92 @@ func (dt *DataTable) applyFilterAndSort(search string) {
 				selection = append(selection, row)
 			}
 		}
-		dt.cellsFiltered = selection
+		w.cellsFiltered = selection
 	}()
-	dt.updateFooter()
-	dt.body.Refresh()
+	w.updateFooter()
+	w.body.Refresh()
 }
 
-func (dt *DataTable) applySort() {
-	for i, x := range dt.header {
-		t := dt.headerCells[i]
+func (w *DataTable) applySort() {
+	for i, x := range w.header {
+		t := w.headerCells[i]
 		var t2 string
-		switch dt.sortCols[i] {
+		switch w.sortCols[i] {
 		case sortOff:
 			t2 = t
-		case sortAsc:
+		case SortAsc:
 			t2 = t + characterSortAsc
-		case sortDesc:
+		case SortDesc:
 			t2 = t + characterSortDesc
 		}
 		l := x.(*tappableLabel)
 		l.SetText(t2)
 	}
-	for i, c := range dt.sortCols {
+	for i, c := range w.sortCols {
 		switch c {
-		case sortAsc:
-			slices.SortFunc(dt.cells, func(a, b row) int {
+		case SortAsc:
+			slices.SortFunc(w.cells, func(a, b row) int {
 				return cmp.Compare(a.columns[i], b.columns[i])
 			})
-		case sortDesc:
-			slices.SortFunc(dt.cells, func(a, b row) int {
+		case SortDesc:
+			slices.SortFunc(w.cells, func(a, b row) int {
 				return cmp.Compare(b.columns[i], a.columns[i])
 			})
 		}
 	}
 }
 
-func (dt *DataTable) makeHeader() []fyne.CanvasObject {
-	objects := make([]fyne.CanvasObject, dt.numCols)
-	for i, s := range dt.headerCells {
+func (w *DataTable) makeHeader() []fyne.CanvasObject {
+	objects := make([]fyne.CanvasObject, w.numCols)
+	for i, s := range w.headerCells {
 		o := newTappableLabel(s, nil)
 		o.TextStyle.Bold = true
 		o.OnTapped = func() {
-			for j := range dt.numCols {
+			for j := range w.numCols {
 				if j == i {
-					if dt.sortCols[i] == sortDesc {
-						dt.sortCols[i] = sortAsc
+					if w.sortCols[i] == SortDesc {
+						w.sortCols[i] = SortAsc
 					} else {
-						dt.sortCols[i]++
+						w.sortCols[i]++
 					}
 				} else {
-					dt.sortCols[j] = sortOff
+					w.sortCols[j] = sortOff
 				}
 			}
-			dt.applyFilterAndSort(dt.searchBar.Text)
+			w.applyFilterAndSort(w.searchBar.Text)
 		}
 		objects[i] = o
 	}
 	return objects
 }
 
-func (dt *DataTable) makeBody() *widget.List {
+func (w *DataTable) makeBody() *widget.List {
 	list := widget.NewList(
 		func() int {
-			dt.mu.RLock()
-			defer dt.mu.RUnlock()
-			return len(dt.cellsFiltered)
+			w.mu.RLock()
+			defer w.mu.RUnlock()
+			return len(w.cellsFiltered)
 		},
 		func() fyne.CanvasObject {
-			dt.mu.RLock()
-			defer dt.mu.RUnlock()
-			objects := make([]fyne.CanvasObject, dt.numCols)
-			for i := range dt.numCols {
+			w.mu.RLock()
+			defer w.mu.RUnlock()
+			objects := make([]fyne.CanvasObject, w.numCols)
+			for i := range w.numCols {
 				l := widget.NewLabel("")
 				l.Truncation = fyne.TextTruncateEllipsis
 				objects[i] = l
 			}
-			return container.New(dt.layout, objects...)
+			return container.New(w.layout, objects...)
 		},
 		func(id widget.ListItemID, co fyne.CanvasObject) {
-			dt.mu.RLock()
-			defer dt.mu.RUnlock()
-			if id >= len(dt.cellsFiltered) {
+			w.mu.RLock()
+			defer w.mu.RUnlock()
+			if id >= len(w.cellsFiltered) {
 				return // safeguard
 			}
-			r := dt.cellsFiltered[id]
+			r := w.cellsFiltered[id]
 			c := co.(*fyne.Container)
-			for i := range dt.numCols {
+			for i := range w.numCols {
 				o := c.Objects[i].(*widget.Label)
 				o.SetText(r.columns[i])
 			}
@@ -248,39 +269,39 @@ func (dt *DataTable) makeBody() *widget.List {
 	)
 	list.OnSelected = func(id widget.ListItemID) {
 		defer list.UnselectAll()
-		if dt.OnSelected == nil {
+		if w.OnSelected == nil {
 			return
 		}
-		dt.mu.RLock()
-		defer dt.mu.RUnlock()
-		if id >= len(dt.cellsFiltered) {
+		w.mu.RLock()
+		defer w.mu.RUnlock()
+		if id >= len(w.cellsFiltered) {
 			return // safeguard
 		}
-		dt.OnSelected(dt.cellsFiltered[id].idx)
+		w.OnSelected(w.cellsFiltered[id].idx)
 	}
 	return list
 }
 
 // SetData sets the content of all cells in the table.
 // Returns an error if not all rows have the expected number of columns.
-func (dt *DataTable) SetData(cells [][]string) error {
-	defer dt.body.Refresh()
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
+func (w *DataTable) SetData(cells [][]string) error {
+	defer w.body.Refresh()
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	for _, r := range cells {
-		if len(r) != dt.numCols {
-			return fmt.Errorf("some rows do not have %d columns", dt.numCols)
+		if len(r) != w.numCols {
+			return fmt.Errorf("some rows do not have %d columns", w.numCols)
 		}
 	}
-	dt.cells = make([]row, len(cells))
+	w.cells = make([]row, len(cells))
 	for i, r := range cells {
-		dt.cells[i] = row{idx: i, columns: r}
+		w.cells[i] = row{idx: i, columns: r}
 	}
-	dt.cellsFiltered = slices.Clone(dt.cells)
-	allCells := slices.Concat([][]string{headersForWidthsCalc(dt.headerCells)}, cells)
-	dt.layout = columnsLayout(minimalColumnWidths(allCells, dt.widths))
-	dt.applySort()
-	dt.updateFooter()
+	w.cellsFiltered = slices.Clone(w.cells)
+	allCells := slices.Concat([][]string{headersForWidthsCalc(w.headerCells)}, cells)
+	w.layout = columnsLayout(minimalColumnWidths(allCells, w.widths))
+	w.applySort()
+	w.updateFooter()
 	return nil
 }
 
@@ -292,15 +313,15 @@ func headersForWidthsCalc(header []string) []string {
 	return h2
 }
 
-func (dt *DataTable) updateFooter() {
+func (w *DataTable) updateFooter() {
 	var s string
 	p := message.NewPrinter(language.English)
-	if len(dt.cellsFiltered) < len(dt.cells) {
-		s = p.Sprintf("%d of %d entries (filtered)", len(dt.cellsFiltered), len(dt.cells))
+	if len(w.cellsFiltered) < len(w.cells) {
+		s = p.Sprintf("%d of %d entries (filtered)", len(w.cellsFiltered), len(w.cells))
 	} else {
-		s = p.Sprintf("%d entries", len(dt.cells))
+		s = p.Sprintf("%d entries", len(w.cells))
 	}
-	dt.footer.SetText(s)
+	w.footer.SetText(s)
 }
 
 // minimalColumnWidths returns the calculated widths for all columns.
@@ -325,28 +346,28 @@ func minimalColumnWidths(cells [][]string, widths []float32) []float32 {
 	return colWidths
 }
 
-func (dt *DataTable) CreateRenderer() fyne.WidgetRenderer {
-	dt.mu.RLock()
-	defer dt.mu.RUnlock()
+func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	var headerFrame, footerFrame fyne.CanvasObject
 	top := container.NewVBox()
-	if !dt.searchBarHidden {
-		top.Add(container.NewGridWithColumns(3, layout.NewSpacer(), dt.searchBar, layout.NewSpacer()))
+	if !w.searchBarHidden {
+		top.Add(container.NewGridWithColumns(3, layout.NewSpacer(), w.searchBar, layout.NewSpacer()))
 	}
-	if !dt.headerHidden {
+	if !w.headerHidden {
 		top.Add(container.NewStack(
 			canvas.NewRectangle(theme.Color(theme.ColorNameHeaderBackground)),
-			container.New(dt.layout, dt.header...),
+			container.New(w.layout, w.header...),
 		))
 	}
 	if len(top.Objects) > 0 {
 		top.Add(widget.NewSeparator())
 		headerFrame = top
 	}
-	if !dt.footerHidden {
-		footerFrame = container.NewVBox(widget.NewSeparator(), dt.footer)
+	if !w.footerHidden {
+		footerFrame = container.NewVBox(widget.NewSeparator(), w.footer)
 	}
-	c := container.NewBorder(headerFrame, footerFrame, nil, nil, dt.body)
+	c := container.NewBorder(headerFrame, footerFrame, nil, nil, w.body)
 	return widget.NewSimpleRenderer(c)
 }
 
