@@ -6,8 +6,8 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// TappableLabel is a Label that can be tapped.
-type TappableLabel struct {
+// tappableLabel is a Label that can be tapped.
+type tappableLabel struct {
 	widget.Label
 
 	// The function that is called when the label is tapped.
@@ -16,25 +16,25 @@ type TappableLabel struct {
 	hovered bool
 }
 
-var _ fyne.Tappable = (*TappableLabel)(nil)
-var _ desktop.Hoverable = (*TappableLabel)(nil)
+var _ fyne.Tappable = (*tappableLabel)(nil)
+var _ desktop.Hoverable = (*tappableLabel)(nil)
 
-// NewTappableLabel returns a new TappableLabel instance.
-func NewTappableLabel(text string, tapped func()) *TappableLabel {
-	l := &TappableLabel{OnTapped: tapped}
+// newTappableLabel returns a new TappableLabel instance.
+func newTappableLabel(text string, tapped func()) *tappableLabel {
+	l := &tappableLabel{OnTapped: tapped}
 	l.ExtendBaseWidget(l)
 	l.SetText(text)
 	return l
 }
 
-func (l *TappableLabel) Tapped(_ *fyne.PointEvent) {
+func (l *tappableLabel) Tapped(_ *fyne.PointEvent) {
 	if l.OnTapped != nil {
 		l.OnTapped()
 	}
 }
 
 // Cursor returns the cursor type of this widget
-func (l *TappableLabel) Cursor() desktop.Cursor {
+func (l *tappableLabel) Cursor() desktop.Cursor {
 	if l.hovered {
 		return desktop.PointerCursor
 	}
@@ -42,15 +42,15 @@ func (l *TappableLabel) Cursor() desktop.Cursor {
 }
 
 // MouseIn is a hook that is called if the mouse pointer enters the element.
-func (l *TappableLabel) MouseIn(e *desktop.MouseEvent) {
+func (l *tappableLabel) MouseIn(e *desktop.MouseEvent) {
 	l.hovered = true
 }
 
-func (l *TappableLabel) MouseMoved(*desktop.MouseEvent) {
+func (l *tappableLabel) MouseMoved(*desktop.MouseEvent) {
 	// needed to satisfy the interface only
 }
 
 // MouseOut is a hook that is called if the mouse pointer leaves the element.
-func (l *TappableLabel) MouseOut() {
+func (l *tappableLabel) MouseOut() {
 	l.hovered = false
 }
