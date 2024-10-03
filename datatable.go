@@ -111,7 +111,7 @@ func New(config Config) (*DataTable, error) {
 	w := &DataTable{
 		footer:          widget.NewLabel(""),
 		footerHidden:    config.FooterHidden,
-		headerCells:     config.Header,
+		headerCells:     slices.Clone(config.Header),
 		headerHidden:    config.HeaderHidden,
 		numCols:         numCols,
 		searchBarHidden: config.SearchBarHidden,
