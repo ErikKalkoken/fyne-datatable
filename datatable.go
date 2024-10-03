@@ -1,4 +1,8 @@
 // Package datatable provides the DataTable widget for the Fyne GUI toolkit.
+//
+// Note that you need the [Fyne] GUI toolkit to use this widget.
+//
+// [Fyne]: https://fyne.io/
 package datatable
 
 import (
@@ -217,7 +221,7 @@ func (w *DataTable) makeHeader() []fyne.CanvasObject {
 		o := newTappableLabel(s, nil)
 		o.TextStyle.Bold = true
 		o.OnTapped = func() {
-			for j := range w.numCols {
+			for j := 0; j < w.numCols; j++ {
 				if j == i {
 					if w.sortCols[i] == SortDesc {
 						w.sortCols[i] = SortAsc
@@ -246,7 +250,7 @@ func (w *DataTable) makeBody() *widget.List {
 			w.mu.RLock()
 			defer w.mu.RUnlock()
 			objects := make([]fyne.CanvasObject, w.numCols)
-			for i := range w.numCols {
+			for i := 0; i < w.numCols; i++ {
 				l := widget.NewLabel("")
 				l.Truncation = fyne.TextTruncateEllipsis
 				objects[i] = l
@@ -261,7 +265,7 @@ func (w *DataTable) makeBody() *widget.List {
 			}
 			r := w.cellsFiltered[id]
 			c := co.(*fyne.Container)
-			for i := range w.numCols {
+			for i := 0; i < w.numCols; i++ {
 				o := c.Objects[i].(*widget.Label)
 				o.SetText(r.columns[i])
 			}
@@ -329,18 +333,20 @@ func (w *DataTable) updateFooter() {
 func minimalColumnWidths(cells [][]string, widths []float32) []float32 {
 	numCols := len(cells[0])
 	colWidths := slices.Clone(widths)
-	for c := range numCols {
+	for x := 0; x < numCols; x++ {
+		// for c := range numCols {
 		var numRows int
-		if colWidths[c] != 0 {
+		if colWidths[x] != 0 {
 			numRows = 1 // only look at headers
 		} else {
 			numRows = len(cells)
 		}
-		for r := range numRows {
-			s := cells[r][c]
+		for y := 0; y < numRows; y++ {
+			// for r := range numRows {
+			s := cells[y][x]
 			l := widget.NewLabel(s)
 			w := l.MinSize().Width
-			colWidths[c] = float32(math.Ceil(float64(max(w, colWidths[c]))))
+			colWidths[x] = float32(math.Ceil(float64(max(w, colWidths[x]))))
 		}
 	}
 	return colWidths
@@ -411,4 +417,11 @@ func (cl columnsLayout) Layout(objects []fyne.CanvasObject, containerSize fyne.S
 		}
 		pos = pos.AddXY(x+padding, 0)
 	}
+}
+
+func max(a, b float32) float32 {
+	if a < b {
+		return b
+	}
+	return a
 }

@@ -1,6 +1,6 @@
 module github.com/ErikKalkoken/fyne-datatable
 
-go 1.23.1
+go 1.19
 
 require (
 	fyne.io/fyne/v2 v2.5.1
