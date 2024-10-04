@@ -105,7 +105,7 @@ type DataTable struct {
 // Returns an error if the validation of the config value failed.
 func New(config Config) (*DataTable, error) {
 	if len(config.Header) == 0 {
-		return nil, fmt.Errorf("headers must be defined")
+		return nil, fmt.Errorf("no headers defined")
 	}
 	numCols := len(config.Header)
 	w := &DataTable{
@@ -119,11 +119,13 @@ func New(config Config) (*DataTable, error) {
 	}
 
 	// column widths
-	x, err := defineWidths(config.ColumnWidths, numCols)
+	widths, err := defineWidths(config.ColumnWidths, numCols)
 	if err != nil {
 		return nil, err
 	}
-	w.widths = x
+	w.widths = widths
+	c := [][]string{headersForWidthsCalc(w.headerCells)}
+	w.layout = columnsLayout(minimalColumnWidths(c, w.widths))
 
 	// sorting
 	if config.SortedColumnDirection == sortOff {
@@ -395,6 +397,9 @@ func (cl columnsLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 }
 
 func (cl columnsLayout) Layout(objects []fyne.CanvasObject, containerSize fyne.Size) {
+	if len(cl) < len(objects) {
+		panic(fmt.Sprintf("not enough columns defined. Need: %d, Have: %d", len(objects), len(cl))) // FIXME
+	}
 	var lastX float32
 	pos := fyne.NewPos(0, 0)
 	padding := theme.Padding()
