@@ -39,27 +39,40 @@ type Config struct {
 	SortedColumnIndex int
 
 	// Initial sort direction
-	SortedColumnDirection sortDir
+	SortedColumnDirection SortDir
 }
+
+// An Alignment represents the alignment the data in a colum.
+type Alignment uint
+
+const (
+	AlignLeading  Alignment = iota // Left alignment
+	AlignCenter                    // Center alignment
+	AlignTrailing                  // Right alignment
+)
 
 // A Column configures a column.
 type Column struct {
+	// Alignment defines the alignment of the data in a column.
+	Alignment Alignment
+
 	// Title is the title displayed in the header of a column.
 	Title string
 
-	// Widths sets the width of each column.
+	// Widths sets the width of a column.
+	//
 	// A column with width 0 will be auto-sized to fit the data in that column.
-	// The width will be adjusted to fit the column header.
+	// The minimum width is the width needed to fit a column's title.
 	Width float32
 }
 
-type sortDir uint
+// A SortDir represents the sort directions for a column
+type SortDir uint
 
-// sort directions for columns
 const (
-	sortOff sortDir = iota
-	SortAsc
-	SortDesc
+	sortOff  SortDir = iota // Sort disabled
+	SortAsc                 // Sort ascending
+	SortDesc                // Sort descending
 )
 
 // characters for showing sort direction
@@ -68,14 +81,14 @@ const (
 	characterSortDesc = "↓"
 )
 
-// row represents a row in a DataTable
+// A row in a DataTable
 type row struct {
 	idx     int // index of this row in the original data
 	columns []string
 }
 
-// DataTable is a Fyne widget representing a data focused table.
-// It is safe for concurrent use by multiple goroutines.
+// A DataTable is a Fyne widget implementing a data-driven table.
+// It's public API is safe for concurrent use by multiple goroutines.
 type DataTable struct {
 
 	// Callback runs when an entry is selected.
@@ -83,6 +96,7 @@ type DataTable struct {
 	OnSelected func(index int)
 
 	widget.BaseWidget
+	alignments      []Alignment
 	body            *widget.List
 	footer          *widget.Label
 	footerHidden    bool
@@ -98,7 +112,7 @@ type DataTable struct {
 	layout        columnsLayout
 	cells         []row
 	cellsFiltered []row
-	sortCols      []sortDir
+	sortCols      []SortDir
 }
 
 // New returns a new DataTable widget.
@@ -114,13 +128,14 @@ func New(config Config) (*DataTable, error) {
 		headerCells[i] = c.Title
 	}
 	w := &DataTable{
+		alignments:      make([]Alignment, numCols),
 		footer:          widget.NewLabel(""),
 		footerHidden:    config.FooterHidden,
 		headerCells:     headerCells,
 		headerHidden:    config.HeaderHidden,
 		numCols:         numCols,
 		searchBarHidden: config.SearchBarHidden,
-		sortCols:        make([]sortDir, numCols),
+		sortCols:        make([]SortDir, numCols),
 	}
 
 	// column widths
@@ -135,6 +150,11 @@ func New(config Config) (*DataTable, error) {
 	w.widths = widths
 	c := [][]string{headersForWidthsCalc(w.headerCells)}
 	w.layout = columnsLayout(minimalColumnWidths(c, w.widths))
+
+	// alignments
+	for i, c := range config.Columns {
+		w.alignments[i] = c.Alignment
+	}
 
 	// sorting
 	if config.SortedColumnDirection == sortOff {
@@ -232,6 +252,14 @@ func (w *DataTable) makeHeader() []fyne.CanvasObject {
 		col := col
 		o := newTappableLabel(s, nil)
 		o.TextStyle.Bold = true
+		switch w.alignments[col] {
+		case AlignLeading:
+			o.Alignment = fyne.TextAlignLeading
+		case AlignCenter:
+			o.Alignment = fyne.TextAlignCenter
+		case AlignTrailing:
+			o.Alignment = fyne.TextAlignTrailing
+		}
 		o.OnTapped = func() {
 			for i := 0; i < w.numCols; i++ {
 				if i == col {
@@ -279,6 +307,14 @@ func (w *DataTable) makeBody() *widget.List {
 			c := co.(*fyne.Container)
 			for i := 0; i < w.numCols; i++ {
 				o := c.Objects[i].(*widget.Label)
+				switch w.alignments[i] {
+				case AlignLeading:
+					o.Alignment = fyne.TextAlignLeading
+				case AlignCenter:
+					o.Alignment = fyne.TextAlignCenter
+				case AlignTrailing:
+					o.Alignment = fyne.TextAlignTrailing
+				}
 				o.SetText(r.columns[i])
 			}
 		},
