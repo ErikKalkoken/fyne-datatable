@@ -1,8 +1,4 @@
-// Package datatable provides the DataTable widget for the Fyne GUI toolkit.
-//
-// Note that you need the [Fyne] GUI toolkit to use this widget.
-//
-// [Fyne]: https://fyne.io/
+// Package datatable provides a data-driven table widget for the Fyne GUI toolkit.
 package datatable
 
 import (
@@ -24,16 +20,11 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// Config is a struct for configuring a DataTable widget.
-// All fields except for Header are optional.
+// A Config configures a DataTable widget.
+// All fields except for Columns are optional.
 type Config struct {
-	// Header sets the content of the header columns.
-	Header []string // MANDATORY
-
-	// ColumnWidths sets the width of each column.
-	// A column with width 0 will be auto-sized to fit the data in that column.
-	// The width will be adjusted to fit the column header.
-	ColumnWidths []float32
+	// Columns configures the columns of the table.
+	Columns []Column // MANDATORY
 
 	// Whether to hide the footer.
 	FooterHidden bool
@@ -49,6 +40,17 @@ type Config struct {
 
 	// Initial sort direction
 	SortedColumnDirection sortDir
+}
+
+// A Column configures a column.
+type Column struct {
+	// Title is the title displayed in the header of a column.
+	Title string
+
+	// Widths sets the width of each column.
+	// A column with width 0 will be auto-sized to fit the data in that column.
+	// The width will be adjusted to fit the column header.
+	Width float32
 }
 
 type sortDir uint
@@ -103,14 +105,18 @@ type DataTable struct {
 // The widgets is configured with a [Config] struct.
 // Returns an error if the validation of the config value failed.
 func New(config Config) (*DataTable, error) {
-	if len(config.Header) == 0 {
+	if len(config.Columns) == 0 {
 		return nil, fmt.Errorf("no headers defined")
 	}
-	numCols := len(config.Header)
+	numCols := len(config.Columns)
+	headerCells := make([]string, numCols)
+	for i, c := range config.Columns {
+		headerCells[i] = c.Title
+	}
 	w := &DataTable{
 		footer:          widget.NewLabel(""),
 		footerHidden:    config.FooterHidden,
-		headerCells:     slices.Clone(config.Header),
+		headerCells:     headerCells,
 		headerHidden:    config.HeaderHidden,
 		numCols:         numCols,
 		searchBarHidden: config.SearchBarHidden,
@@ -118,7 +124,11 @@ func New(config Config) (*DataTable, error) {
 	}
 
 	// column widths
-	widths, err := defineWidths(config.ColumnWidths, numCols)
+	widths := make([]float32, numCols)
+	for i, c := range config.Columns {
+		widths[i] = c.Width
+	}
+	widths, err := defineWidths(widths, numCols)
 	if err != nil {
 		return nil, err
 	}
