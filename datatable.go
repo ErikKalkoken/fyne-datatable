@@ -20,7 +20,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
@@ -91,13 +90,13 @@ type DataTable struct {
 	numCols         int
 	searchBar       *widget.Entry
 	searchBarHidden bool
-	sortCols        []sortDir
 	widths          []float32
 
 	mu            sync.RWMutex
 	layout        columnsLayout
 	cells         []row
 	cellsFiltered []row
+	sortCols      []sortDir
 }
 
 // New returns a new DataTable widget.
@@ -219,24 +218,25 @@ func (w *DataTable) applySort() {
 
 func (w *DataTable) makeHeader() []fyne.CanvasObject {
 	objects := make([]fyne.CanvasObject, w.numCols)
-	for i, s := range w.headerCells {
+	for col, s := range w.headerCells {
+		col := col
 		o := newTappableLabel(s, nil)
 		o.TextStyle.Bold = true
 		o.OnTapped = func() {
-			for j := 0; j < w.numCols; j++ {
-				if j == i {
-					if w.sortCols[i] == SortDesc {
-						w.sortCols[i] = SortAsc
+			for i := 0; i < w.numCols; i++ {
+				if i == col {
+					if w.sortCols[col] == SortDesc {
+						w.sortCols[col] = SortAsc
 					} else {
-						w.sortCols[i]++
+						w.sortCols[col]++
 					}
 				} else {
-					w.sortCols[j] = sortOff
+					w.sortCols[i] = sortOff
 				}
 			}
 			w.applyFilterAndSort(w.searchBar.Text)
 		}
-		objects[i] = o
+		objects[col] = o
 	}
 	return objects
 }
@@ -360,7 +360,7 @@ func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
 	var headerFrame, footerFrame fyne.CanvasObject
 	top := container.NewVBox()
 	if !w.searchBarHidden {
-		top.Add(container.NewGridWithColumns(3, layout.NewSpacer(), w.searchBar, layout.NewSpacer()))
+		top.Add(w.searchBar)
 	}
 	if !w.headerHidden {
 		top.Add(container.NewStack(
@@ -375,7 +375,7 @@ func (w *DataTable) CreateRenderer() fyne.WidgetRenderer {
 	if !w.footerHidden {
 		footerFrame = container.NewVBox(widget.NewSeparator(), w.footer)
 	}
-	c := container.NewBorder(headerFrame, footerFrame, nil, nil, w.body)
+	c := container.NewHScroll(container.NewBorder(headerFrame, footerFrame, nil, nil, w.body))
 	return widget.NewSimpleRenderer(c)
 }
 
