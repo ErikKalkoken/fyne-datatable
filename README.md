@@ -1,5 +1,6 @@
 # fyne-datatable
 
-An easy to use Fyne widget for data tables.
+A data table widget for Fyne.
 
-WIP
+> [!WARNING]
+> This current status of this widget is: experimental. Use at your own risk.
